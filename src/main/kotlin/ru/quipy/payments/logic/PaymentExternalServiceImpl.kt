@@ -6,12 +6,13 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody
 import org.slf4j.LoggerFactory
+import ru.quipy.common.utils.SlidingWindowRateLimiter
 import ru.quipy.core.EventSourcingService
 import ru.quipy.payments.api.PaymentAggregate
 import java.net.SocketTimeoutException
 import java.time.Duration
-import java.util.*
-
+import java.util.UUID
+import java.util.concurrent.Semaphore
 
 // Advice: always treat time as a Duration
 class PaymentExternalSystemAdapterImpl(
@@ -33,13 +34,28 @@ class PaymentExternalSystemAdapterImpl(
     private val requestAverageProcessingTime = properties.averageProcessingTime
     private val rateLimitPerSec = properties.rateLimitPerSec
     private val parallelRequests = properties.parallelRequests
+    private val paymentSlots = Semaphore(parallelRequests, true)
+    private val submissionLimiter = SlidingWindowRateLimiter(
+        rate = rateLimitPerSec.toLong(),
+        window = Duration.ofMillis(1050)
+    )
 
     private val client = OkHttpClient.Builder().build()
 
     override fun performPaymentAsync(paymentId: UUID, amount: Int, paymentStartedAt: Long, deadline: Long) {
+        paymentSlots.acquire()
+        try {
+            performPaymentWithSlot(paymentId, amount, paymentStartedAt)
+        } finally {
+            paymentSlots.release()
+        }
+    }
+    private fun performPaymentWithSlot(paymentId: UUID, amount: Int, paymentStartedAt: Long) {
         logger.warn("[$accountName] Submitting payment request for payment $paymentId")
 
         val transactionId = UUID.randomUUID()
+
+        submissionLimiter.tickBlocking()
 
         // Вне зависимости от исхода оплаты важно отметить что она была отправлена.
         // Это требуется сделать ВО ВСЕХ СЛУЧАЯХ, поскольку эта информация используется сервисом тестирования.
@@ -82,7 +98,6 @@ class PaymentExternalSystemAdapterImpl(
 
                 else -> {
                     logger.error("[$accountName] Payment failed for txId: $transactionId, payment: $paymentId", e)
-
                     paymentESService.update(paymentId) {
                         it.logProcessing(false, now(), transactionId, reason = e.message)
                     }
@@ -96,7 +111,6 @@ class PaymentExternalSystemAdapterImpl(
     override fun isEnabled() = properties.enabled
 
     override fun name() = properties.accountName
-
 }
 
 public fun now() = System.currentTimeMillis()
