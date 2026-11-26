@@ -27,10 +27,11 @@ class OrderPayer {
     private lateinit var paymentService: PaymentService
 
     private val queueCapacity = System.getenv("SHOP_PAYMENT_QUEUE_CAPACITY")?.toInt() ?: 8_000
+    private val workerCount = System.getenv("SHOP_PAYMENT_WORKERS")?.toInt() ?: 16
 
     private val paymentExecutor = ThreadPoolExecutor(
-        16,
-        16,
+        workerCount,
+        workerCount,
         0L,
         TimeUnit.MILLISECONDS,
         LinkedBlockingQueue<Runnable>(queueCapacity),
