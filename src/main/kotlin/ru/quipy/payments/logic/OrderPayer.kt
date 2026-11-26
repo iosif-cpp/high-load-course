@@ -26,14 +26,16 @@ class OrderPayer {
     @Autowired
     private lateinit var paymentService: PaymentService
 
+    private val queueCapacity = System.getenv("SHOP_PAYMENT_QUEUE_CAPACITY")?.toInt() ?: 8_000
+
     private val paymentExecutor = ThreadPoolExecutor(
         16,
         16,
         0L,
         TimeUnit.MILLISECONDS,
-        LinkedBlockingQueue(8_000),
+        LinkedBlockingQueue<Runnable>(queueCapacity),
         NamedThreadFactory("payment-submission-executor"),
-        CallerBlockingRejectedExecutionHandler()
+        ThreadPoolExecutor.AbortPolicy()
     )
 
     fun processPayment(orderId: UUID, amount: Int, paymentId: UUID, deadline: Long): Long {
